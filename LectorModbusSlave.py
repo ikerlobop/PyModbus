@@ -2,11 +2,24 @@ from tkinter import *
 from tkinter import messagebox
 from pymodbus.client import ModbusTcpClient
 from pymodbus.exceptions import ConnectionException
+import scapy.all as scapy
 
 
 def log_event(text_widget, message):
     text_widget.insert(END, message + "\n")
     text_widget.see(END)  # Hace scroll automáticamente para mostrar el mensaje más reciente
+
+
+def get_mac_address(ip):
+    arp_request = scapy.ARP(pdst=ip)
+    broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
+    arp_request_broadcast = broadcast / arp_request
+    answered_list = scapy.srp(arp_request_broadcast, timeout=1, verbose=False)[0]
+
+    if answered_list:
+        return answered_list[0][1].hwsrc
+    else:
+        return None
 
 
 def scan_modbus_devices(start, end, subnet_entry, log_text):
@@ -27,6 +40,12 @@ def scan_modbus_devices(start, end, subnet_entry, log_text):
         for i in range(start_address, end_address + 1):
             ip_address = subnet + str(i)
             client = ModbusTcpClient(ip_address)
+            mac_address = get_mac_address(ip_address)
+
+            if mac_address:
+                log_event(log_text, f"Dispositivo en {ip_address} tiene la dirección MAC: {mac_address}")
+            else:
+                log_event(log_text, f"No se pudo obtener la dirección MAC del dispositivo en {ip_address}")
 
             try:
                 connection = client.connect()
@@ -40,7 +59,7 @@ def scan_modbus_devices(start, end, subnet_entry, log_text):
                 slave_id = result.registers[0]
                 log_event(log_text, f"Número de identificación del esclavo: {slave_id}")
 
-                additional_result = client.read_holding_registers(1, 10, unit=1)
+                additional_result = client.read_holding_registers(0, 10, unit=1)
                 log_event(log_text, f"Datos adicionales del esclavo en {ip_address}: {additional_result.registers}")
 
                 client.close()
