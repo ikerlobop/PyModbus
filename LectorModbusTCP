@@ -1,0 +1,40 @@
+from tkinter import *
+from tkinter import messagebox
+from pymodbus.client import ModbusTcpClient
+from pymodbus.exceptions import ConnectionException
+
+
+# Función para leer valores de Modbus
+def leer_modbus():
+    client = ModbusTcpClient('192.168.2.221')  # Dirección IP del dispositivo Modbus
+
+    try:
+        if not client.connect():
+            raise ConnectionException("No se pudo conectar al dispositivo Modbus")
+
+        # Leer registros (Ejemplo: leer 10 registros a partir de la dirección 0)
+        rr = client.read_holding_registers(0, 10)  # Cambia la dirección y cantidad según sea necesario
+
+        if rr.isError():
+            raise Exception("Error al leer los registros de Modbus")
+
+        texto_resultado.set(str(rr.registers))
+        client.close()
+
+    except (ConnectionException, Exception) as e:
+        messagebox.showerror("Error", f"Error al leer de Modbus: {e}")
+        client.close()
+
+ventana = Tk()
+ventana.title("Lectura de valores Modbus")
+ventana.geometry("300x150")
+
+texto_resultado = StringVar()
+
+etiqueta_resultado = Label(ventana, textvariable=texto_resultado, font=("Arial", 12), width=30)
+etiqueta_resultado.pack(pady=20)
+
+boton_leer = Button(ventana, text="Leer Modbus", command=leer_modbus, font=("Arial", 12))
+boton_leer.pack()
+
+ventana.mainloop()
