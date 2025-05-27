@@ -1,13 +1,13 @@
 from tkinter import *
 from tkinter import messagebox
 from pymodbus.client import ModbusTcpClient
-from pymodbus.exceptions import ConnectionException
+from pymodbus.exceptions import ModbusException
 import scapy.all as scapy
 
 
 def log_event(text_widget, message):
     text_widget.insert(END, message + "\n")
-    text_widget.see(END)  # Hace scroll automáticamente para mostrar el mensaje más reciente
+    text_widget.see(END)
 
 
 def get_mac_address(ip):
@@ -15,65 +15,68 @@ def get_mac_address(ip):
     broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
     arp_request_broadcast = broadcast / arp_request
     answered_list = scapy.srp(arp_request_broadcast, timeout=1, verbose=False)[0]
-
-    if answered_list:
-        return answered_list[0][1].hwsrc
-    else:
-        return None
+    return answered_list[0][1].hwsrc if answered_list else None
 
 
-def scan_modbus_devices(start, end, subnet_entry, log_text):
-    subnet = subnet_entry.get()
+def scan_modbus_devices(start_entry, end_entry, subnet_entry, log_text):
+    subnet = subnet_entry.get().strip()
 
-    if not subnet.strip():
-        messagebox.showerror("Error", "Por favor, introduce una subred válida.")
-        return
-
-    if not subnet.endswith("."):
-        messagebox.showerror("Error", "La subred debe terminar con un punto (por ejemplo, 192.168.2.).")
+    if not subnet or not subnet.endswith("."):
+        messagebox.showerror("Error", "La subred debe terminar en punto, por ejemplo: 192.168.0.")
         return
 
     try:
-        start_address = int(start.get())
-        end_address = int(end.get())
+        start = int(start_entry.get())
+        end = int(end_entry.get())
 
-        for i in range(start_address, end_address + 1):
-            ip_address = subnet + str(i)
-            client = ModbusTcpClient(ip_address)
-            mac_address = get_mac_address(ip_address)
-
-            if mac_address:
-                log_event(log_text, f"Dispositivo en {ip_address} tiene la dirección MAC: {mac_address}")
-            else:
-                log_event(log_text, f"No se pudo obtener la dirección MAC del dispositivo en {ip_address}")
-
-            try:
-                connection = client.connect()
-                result = client.read_holding_registers(0, 1, unit=1)
-
-                if result.isError():
-                    log_event(log_text, f"No se encontró dispositivo en {ip_address}")
-                    continue
-
-                log_event(log_text, f"Dispositivo Modbus encontrado en {ip_address}")
-                slave_id = result.registers[0]
-                log_event(log_text, f"Número de identificación del esclavo: {slave_id}")
-
-                additional_result = client.read_holding_registers(0, 10, unit=1)
-                log_event(log_text, f"Datos adicionales del esclavo en {ip_address}: {additional_result.registers}")
-
-                client.close()
-
-            except ConnectionException as e:
-                if "10051" in str(e):  # WinError 10051: Se ha intentado una operación de socket en una red no accesible
-                    log_event(log_text, f"No se pudo conectar a {ip_address}: La red no es accesible.")
-                else:
-                    log_event(log_text, f"No se pudo conectar a {ip_address}: {e}")
-
-        messagebox.showinfo("Escaneo completado", "El escaneo de dispositivos Modbus ha finalizado.")
+        if not (0 <= start <= 255 and 0 <= end <= 255 and start <= end):
+            raise ValueError
 
     except ValueError:
-        messagebox.showerror("Error", "Por favor, introduce números válidos para el inicio y el final del rango.")
+        messagebox.showerror("Error", "Introduce un rango válido (0-255).")
+        return
+
+    for i in range(start, end + 1):
+        ip_address = subnet + str(i)
+        log_event(log_text, f"\nEscaneando {ip_address}...")
+
+        mac_address = get_mac_address(ip_address)
+        if mac_address:
+            log_event(log_text, f"MAC encontrada: {mac_address}")
+        else:
+            log_event(log_text, "No se encontró MAC (el host podría no estar activo).")
+
+        client = ModbusTcpClient(ip_address)
+        try:
+            if not client.connect():
+                log_event(log_text, "No se pudo establecer conexión Modbus.")
+                continue
+
+            result = client.read_holding_registers(address=0, count=1, slave=1)
+
+            if result.isError():
+                log_event(log_text, "No se detectó dispositivo Modbus.")
+                continue
+
+            log_event(log_text, "Dispositivo Modbus encontrado.")
+            log_event(log_text, f"ID del esclavo: {result.registers[0]}")
+
+            additional = client.read_holding_registers(address=0, count=10, slave=1)
+            if not additional.isError():
+                log_event(log_text, f"Datos adicionales: {additional.registers}")
+            else:
+                log_event(log_text, "Error al leer registros adicionales.")
+
+        except ModbusException as e:
+            log_event(log_text, f"Error Modbus en {ip_address}: {e}")
+
+        except Exception as e:
+            log_event(log_text, f"Error inesperado: {e}")
+
+        finally:
+            client.close()
+
+    messagebox.showinfo("Escaneo finalizado", "Escaneo de dispositivos Modbus completado.")
 
 
 def main():
@@ -83,31 +86,24 @@ def main():
     frame = Frame(root)
     frame.pack(padx=10, pady=10)
 
-    subnet_label = Label(frame, text="Subred:")
-    subnet_label.grid(row=0, column=0, padx=5, pady=5)
-
+    Label(frame, text="Subred:").grid(row=0, column=0, padx=5, pady=5)
     subnet_entry = Entry(frame)
     subnet_entry.grid(row=0, column=1, padx=5, pady=5)
-    subnet_entry.insert(0, "0.0.0.")  # Valor predeterminado para la subred
+    subnet_entry.insert(0, "192.168.0.")
 
-    start_label = Label(frame, text="Inicio del rango:")
-    start_label.grid(row=1, column=0, padx=5, pady=5)
-
+    Label(frame, text="Inicio del rango:").grid(row=1, column=0, padx=5, pady=5)
     start_entry = Entry(frame)
     start_entry.grid(row=1, column=1, padx=5, pady=5)
 
-    end_label = Label(frame, text="Fin del rango:")
-    end_label.grid(row=2, column=0, padx=5, pady=5)
-
+    Label(frame, text="Fin del rango:").grid(row=2, column=0, padx=5, pady=5)
     end_entry = Entry(frame)
     end_entry.grid(row=2, column=1, padx=5, pady=5)
 
     log_text = Text(frame, width=60, height=20)
     log_text.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
 
-    scan_button = Button(frame, text="Iniciar escaneo",
-                         command=lambda: scan_modbus_devices(start_entry, end_entry, subnet_entry, log_text))
-    scan_button.grid(row=4, columnspan=2, padx=5, pady=5)
+    Button(frame, text="Iniciar escaneo",
+           command=lambda: scan_modbus_devices(start_entry, end_entry, subnet_entry, log_text)).grid(row=4, columnspan=2, pady=10)
 
     root.mainloop()
 
